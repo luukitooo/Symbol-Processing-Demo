@@ -31,8 +31,8 @@ data class LoginViewState(
 }
 
 
-/**
- * @Generated_Code_Example:
+/*
+ * Generated Code Example:
  *
  * public sealed class LoginViewStateEvents {
  *   public data class UpdateEmail(

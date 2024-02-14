@@ -1,6 +1,6 @@
 ## About Project
 I created an annotation which generates UI Events in compile time, you just need to define a view state, annotate it with @UIEvents and rebuild the project.
-Annotations are processing with KSP (Kotlin Symbol Processing) and code is generated with KotlinPoet.
+Annotations are processed with KSP (Kotlin Symbol Processing) and code is generated with KotlinPoet.
 
 P.S. This project was made for educational purposes.
 
@@ -38,7 +38,7 @@ data class LoginViewState(
 
 <br>
 
-And here is a generated events for our view state:
+And here are generated events for our view state:
 ```kotlin
 /**
  * Events class for [LoginViewState]
@@ -71,7 +71,7 @@ public sealed class LoginViewStateEvents {
 <br>
 
 ## Usage
-You can use generated events to send them from your screens and then handle inside ViewModels to update a view state and user interface. You can have onEvent function in your ViewModel like this:
+You can use generated **LoginViewStateEvents** to send events from your screens and then handle inside ViewModels to update a view state. You can have onEvent function in your ViewModel like this:
 ```kotlin
 fun onEvent(event: LoginViewStateEvents) {
         when (event) {

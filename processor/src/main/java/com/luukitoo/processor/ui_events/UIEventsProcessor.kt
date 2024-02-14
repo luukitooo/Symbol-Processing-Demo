@@ -3,32 +3,23 @@ package com.luukitoo.processor.ui_events
 import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
 import com.google.devtools.ksp.symbol.KSAnnotated
 import com.google.devtools.ksp.symbol.KSClassDeclaration
-import com.luukitoo.annotation.CustomEvent
-import com.luukitoo.annotation.IgnoreEvent
 import com.luukitoo.annotation.UIEvents
+import com.luukitoo.processor.base.ClassVisitor
 import com.luukitoo.processor.base.KotlinSymbolProcessor
-import com.luukitoo.processor.util.classVisitorVoid
-import com.luukitoo.processor.extension.asUpdateEventName
 import com.luukitoo.processor.extension.forEachSymbolAnnotatedWith
-import com.luukitoo.processor.extension.getAnnotationOrNull
-import com.luukitoo.processor.extension.getStateProperties
 import com.luukitoo.processor.extension.ifNotDataClass
-import com.luukitoo.processor.extension.isAnnotation
-import com.luukitoo.processor.ui_events.annotation_params.CustomEventParams
-import com.luukitoo.processor.ui_events.annotation_params.UIEventsParams
-import com.luukitoo.processor.util.SimpleBuilder
+import com.luukitoo.processor.ui_events.visitor.CreateCustomEventsClassVisitor
+import com.luukitoo.processor.ui_events.visitor.CreateEmptyEventsClassVisitor
+import com.luukitoo.processor.ui_events.visitor.CreateRootTypeClassVisitor
+import com.luukitoo.processor.ui_events.visitor.CreateUpdateEventsClassVisitor
 import com.squareup.kotlinpoet.ClassName
-import com.squareup.kotlinpoet.CodeBlock
 import com.squareup.kotlinpoet.FileSpec
-import com.squareup.kotlinpoet.KModifier
 import com.squareup.kotlinpoet.TypeSpec
-import com.squareup.kotlinpoet.asClassName
-import com.squareup.kotlinpoet.ksp.toClassName
-import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
 
 /**
- * Most interesting stuff is happening here :P
+ * [UIEvents] processor itself.
+ * Code is generated here.
  * */
 class UIEventsProcessor(
     environment: SymbolProcessorEnvironment,
@@ -36,12 +27,12 @@ class UIEventsProcessor(
 
     override fun handleProcessing(): List<KSAnnotated> {
         utils.resolver.forEachSymbolAnnotatedWith(UIEvents::class) { annotatedSymbol ->
-            annotatedSymbol.accept(classVisitor, Unit)
+            annotatedSymbol.accept(annotatedClassVisitor, Unit)
         }
         return emptyList()
     }
 
-    private val classVisitor = classVisitorVoid { classDeclaration ->
+    private val annotatedClassVisitor = ClassVisitor.create { classDeclaration ->
         classDeclaration.ifNotDataClass {
             utils.logger.error(
                 message = "@UIEvents must target data classes.",
@@ -56,91 +47,27 @@ class UIEventsProcessor(
             classDeclaration.packageName.asString(),
             classDeclaration.simpleName.asString().plus("Events")
         )
-        val updateEvents = createUpdateEvents(
-            classDeclaration = classDeclaration,
-            rootClassType = rootClassType
+        val updateEvents = classDeclaration.accept(
+            visitor = CreateUpdateEventsClassVisitor(),
+            data = rootClassType
         )
-        val customEvents = createCustomEvents(
-            classDeclaration = classDeclaration,
-            rootClassType = rootClassType
+        val customEvents = classDeclaration.accept(
+            visitor = CreateCustomEventsClassVisitor(),
+            data = rootClassType
         )
-        val emptyEvents = createEmptyEvents(
-            classDeclaration = classDeclaration,
-            rootClassType = rootClassType
+        val emptyEvents = classDeclaration.accept(
+            visitor = CreateEmptyEventsClassVisitor(),
+            data = rootClassType
         )
-        val rootClass = createRootClass(
-            type = rootClassType,
-            classDeclaration = classDeclaration,
-            events = updateEvents + customEvents + emptyEvents
+        val rootClass = classDeclaration.accept(
+            visitor = CreateRootTypeClassVisitor(),
+            data = CreateRootTypeClassVisitor.Params(
+                type = rootClassType,
+                events = updateEvents + customEvents + emptyEvents
+            )
         )
         generateFile(classDeclaration, rootClass)
     }
-
-    private fun createUpdateEvents(
-        classDeclaration: KSClassDeclaration,
-        rootClassType: ClassName,
-    ): List<TypeSpec> {
-        val ksAnnotation = classDeclaration.getAnnotationOrNull(UIEvents::class)
-        val autoGenerationEnabled = UIEventsParams.createFrom(ksAnnotation).autoGeneration
-        return if (autoGenerationEnabled) {
-            classDeclaration.getStateProperties().mapNotNull { propertyDeclaration ->
-                if (propertyDeclaration.getAnnotationOrNull(IgnoreEvent::class) != null) {
-                    return@mapNotNull null
-                }
-                SimpleBuilder.dataClass(
-                    className = propertyDeclaration.asUpdateEventName(),
-                    superClass = rootClassType,
-                    params = listOf("newValue" to propertyDeclaration.type.toTypeName()),
-                )
-            }
-        } else {
-            emptyList()
-        }
-    }
-
-    private fun createCustomEvents(
-        classDeclaration: KSClassDeclaration,
-        rootClassType: ClassName,
-    ): List<TypeSpec> {
-        val customEvents = classDeclaration.annotations.filter {
-            it.isAnnotation(CustomEvent::class)
-        }
-        return customEvents.mapNotNull { ksAnnotation ->
-            val params = CustomEventParams.createFrom(ksAnnotation) ?: return@mapNotNull null
-            SimpleBuilder.dataClass(
-                className = params.eventName,
-                superClass = rootClassType,
-                params = listOf(params.paramName to params.paramType)
-            )
-        }.toList()
-    }
-
-    private fun createEmptyEvents(
-        classDeclaration: KSClassDeclaration,
-        rootClassType: ClassName,
-    ): List<TypeSpec> {
-        val ksAnnotation = classDeclaration.getAnnotationOrNull(UIEvents::class)
-        val params = UIEventsParams.createFrom(ksAnnotation)
-        return params.emptyEvents.map {
-            TypeSpec.objectBuilder(it)
-                .addModifiers(KModifier.DATA)
-                .superclass(rootClassType)
-                .build()
-        }
-    }
-
-    private fun createRootClass(
-        type: ClassName,
-        classDeclaration: KSClassDeclaration,
-        events: List<TypeSpec>,
-    ) = TypeSpec.classBuilder(type)
-        .addModifiers(KModifier.SEALED)
-        .addTypes(events)
-        .addKdoc(
-            CodeBlock.builder()
-                .addStatement("Events class for [%T]", classDeclaration.toClassName())
-                .build()
-        ).build()
 
     private fun generateFile(
         classDeclaration: KSClassDeclaration,
